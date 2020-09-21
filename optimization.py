@@ -1,6 +1,18 @@
 from numba import njit, prange
 import numpy as np
+import time
 
+class Timer:
+    def __init__(self, out_str):
+        self.out_str = out_str
+        self.time = time.time()
+
+    def __enter__(self):
+        print(self.out_str, end="")
+        self.time = time.time()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print(str(round(time.time() - self.time, 2)), " seconds")
 
 @njit
 def get_ranks(w_vector):
@@ -57,8 +69,8 @@ def iteration_improve(opt_matrix, c_min, c_max):
     to_remove_adj = (to_remove + diff_max_min) * (to_remove > 0)
     to_add_adj = (to_add + diff_max_min) * (to_add > 0)
 
-    over_alloc_pct = (to_remove_adj) / opt_matrix.shape[0]
-    under_alloc_pct = (to_add_adj) / opt_matrix.shape[0]
+    over_alloc_pct = to_remove_adj / opt_matrix.shape[0]
+    under_alloc_pct = to_add_adj / opt_matrix.shape[0]
 
     for idx in prange(opt_matrix.shape[0]):
         row_values = opt_matrix[idx, :]
@@ -100,9 +112,46 @@ def improve_single_row(opt_vector, over_alloc_pct, under_alloc_pct, can_add, can
                 opt_vector[idx] = False
 
 
-def iterative_improvement(opt_matrix, c_min, c_max):
-    """ run the improvement iteration until constraints are met """
-    pass
+def print_solution_diagnostic(opt_matrix, c_min, c_max):
+    """prints a summary of solution status to keep track of improvements through iterations
+    basic idea is to show how many constraints are breached and by how much"""
+    over_alloc, under_alloc, _, _ = n_add_remove(opt_matrix, c_min, c_max)
+    if over_alloc.sum() == 0 and under_alloc.sum() == 0:
+        print("all constraints are met!")
+    else:
+        for idx in prange(opt_matrix.shape[1]):
+            if over_alloc[idx] > 0:
+                print(str(int(over_alloc[idx])) + " total too high for column " + str(idx))
+
+            elif under_alloc[idx] > 0:
+                print(str(int(under_alloc[idx])) + " total too low for column " + str(idx))
+
+    return over_alloc, under_alloc
+
+
+def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_iter=None, ):
+    """
+    get the solution from the optimal_result  function then iteratively calls the iteration_improve function
+    until either a valid solution is found or a maximal number of iterations has been reached.
+    :param opt_matrix: numpy array (I x J) boolean defining the solution
+    :param w_matrix: numpy array (I x J) float defining the W matrix
+    :param r_vector: row constraints vector R
+    :param c_min: col constraints vector C_min
+    :param c_max: col constraints vector C_max
+    :param max_iter: maximal number of improvement iterations
+    """
+
+    with Timer("Calculating initial solution..."):
+        opt_matrix = optimal_result(opt_matrix, w_matrix, r_vector)
+
+    over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max)
+
+    iteration_n = 0
+    while (sum(over_alloc) > 1 or sum(under_alloc) > 1) and iteration_n != max_iter:
+        iteration_n += 1
+        with Timer(f"Iteration {iteration_n} :\n"):
+            opt_matrix = iteration_improve(opt_matrix, c_min, c_max)
+            over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max)
 
 
 if __name__ == '__main__':
@@ -111,10 +160,9 @@ if __name__ == '__main__':
     n_col = 20
     M = np.zeros((n_row, n_col)).astype(np.int32)
     W = np.random.random((n_row, n_col)).astype(np.float32)
-    R = np.random.randint(0, n_col, (n_row)).astype(np.int32)
-    C_max = np.random.randint(150, n_row, (n_col)).astype(np.int32)
+    R = np.random.randint(0, n_col, n_row).astype(np.int32)
+    C_max = np.random.randint(150, n_row, n_col).astype(np.int32)
     C_min = C_max - 100
 
-    M2 = optimal_result(M, W, R)
-    M3 = iteration_improve(M2, C_min, C_max)
+    iterative_improvement(M, W, R, C_min, C_max, max_iter=10)
     _ = 1
