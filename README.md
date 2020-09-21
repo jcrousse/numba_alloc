@@ -1,5 +1,5 @@
 # numba_alloc
-A GPU-accelerated heuristic for a variant of the 
+A numba njit heuristic for a variant of the 
 [integer programming problem](https://en.wikipedia.org/wiki/Integer_programming).
 
 We we want to find the <img src="https://latex.codecogs.com/gif.latex?M_{ij}" /> values for 2D binary 
