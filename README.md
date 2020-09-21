@@ -7,7 +7,8 @@ matrix *M* such that the element-wise multiplication of *M* with the weight matr
 is maximized.  
 This is done under the constraints that 
 * the sum of the rows of *M* cannot exceed the values given in the vector *R*
-* the sum of the columns of *M* cannot exceed the values given in the vector *C*
+* the sum of the columns of *M* cannot exceed the values given in the vector *Cmax*
+* the sum of the columns of *M* cannot be below the values given in the vector *Cmin*
 
 Also, we assume that the number of rows in the matrix is far larger than the number of columns. 
 
@@ -18,7 +19,7 @@ Basicaly:
 * with   
 <img src="https://latex.codecogs.com/gif.latex?\sum_{j} m_{i, j} \le R_{i} \forall i \in I" />
 * and   
-<img src="https://latex.codecogs.com/gif.latex?\sum_{i} m_{i, j} \le C_{j} \forall j \in J" />
+<img src="https://latex.codecogs.com/gif.latex?Cmin_{j} \le \sum_{i} m_{i, j} \le Cmax_{j} \forall j \in J" />
 * and   
 <img src="https://latex.codecogs.com/gif.latex?I >> J" />
 
