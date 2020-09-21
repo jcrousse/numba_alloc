@@ -2,6 +2,7 @@ from numba import njit, prange
 import numpy as np
 import time
 
+
 class Timer:
     def __init__(self, out_str):
         self.out_str = out_str
@@ -13,6 +14,7 @@ class Timer:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         print(str(round(time.time() - self.time, 2)), " seconds")
+
 
 @njit
 def get_ranks(w_vector):
