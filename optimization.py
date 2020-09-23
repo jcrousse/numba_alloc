@@ -4,16 +4,24 @@ import time
 
 
 class Timer:
-    def __init__(self, out_str):
+    def __init__(self, out_str, verbose=True):
         self.out_str = out_str
         self.time = time.time()
+        self.verbose = verbose
 
     def __enter__(self):
-        print(self.out_str, end="")
+        if self.verbose:
+            print(self.out_str, end="")
         self.time = time.time()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        print(str(round(time.time() - self.time, 2)), " seconds")
+        seconds_taken = self.get_time_s()
+        if self.verbose:
+            print(str(seconds_taken), " seconds")
+
+    def get_time_s(self):
+        return round(time.time() - self.time, 2)
 
 
 @njit
@@ -114,24 +122,25 @@ def improve_single_row(opt_vector, over_alloc_pct, under_alloc_pct, can_add, can
                 opt_vector[idx] = False
 
 
-def print_solution_diagnostic(opt_matrix, c_min, c_max):
+def print_solution_diagnostic(opt_matrix, c_min, c_max, verbose):
     """prints a summary of solution status to keep track of improvements through iterations
     basic idea is to show how many constraints are breached and by how much"""
     over_alloc, under_alloc, _, _ = n_add_remove(opt_matrix, c_min, c_max)
-    if over_alloc.sum() == 0 and under_alloc.sum() == 0:
-        print("all constraints are met!")
-    else:
-        for idx in prange(opt_matrix.shape[1]):
-            if over_alloc[idx] > 0:
-                print(str(int(over_alloc[idx])) + " total too high for column " + str(idx))
+    if verbose:
+        if over_alloc.sum() == 0 and under_alloc.sum() == 0:
+            print("all constraints are met!")
+        else:
+            for idx in prange(opt_matrix.shape[1]):
+                if over_alloc[idx] > 0:
+                    print(str(int(over_alloc[idx])) + " total too high for column " + str(idx))
 
-            elif under_alloc[idx] > 0:
-                print(str(int(under_alloc[idx])) + " total too low for column " + str(idx))
+                elif under_alloc[idx] > 0:
+                    print(str(int(under_alloc[idx])) + " total too low for column " + str(idx))
 
     return over_alloc, under_alloc
 
 
-def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_iter=None, ):
+def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_iter=None, verbose=True):
     """
     get the solution from the optimal_result  function then iteratively calls the iteration_improve function
     until either a valid solution is found or a maximal number of iterations has been reached.
@@ -143,17 +152,25 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_ite
     :param max_iter: maximal number of improvement iterations
     """
 
-    with Timer("Calculating initial solution..."):
+    total_time = 0
+    with Timer("Calculating initial solution...", verbose) as t:
         opt_matrix = optimal_result(opt_matrix, w_matrix, r_vector)
+        total_time += t.get_time_s()
 
-    over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max)
+    over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max, verbose)
 
+    solution_vals = []
     iteration_n = 0
     while (sum(over_alloc) > 1 or sum(under_alloc) > 1) and iteration_n != max_iter:
+        solution_vals.append(np.sum(np.multiply(opt_matrix, w_matrix)))
         iteration_n += 1
-        with Timer(f"Iteration {iteration_n} :\n"):
+        with Timer(f"Iteration {iteration_n} :\n", verbose) as t:
             opt_matrix = iteration_improve(opt_matrix, c_min, c_max)
-            over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max)
+            over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max, verbose)
+            total_time += t.get_time_s()
+    solution_vals.append(np.sum(np.multiply(opt_matrix, w_matrix)))
+
+    return solution_vals, total_time
 
 
 if __name__ == '__main__':
