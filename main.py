@@ -21,8 +21,8 @@ def get_matrices_opt(rows, cols):
 if __name__ == '__main__':
     np.random.seed(123)
 
-    RUN_SINGLE = True
-    RUN_GRID = False
+    RUN_SINGLE = False
+    RUN_GRID = True
 
     if RUN_SINGLE:
         M, W, R, C_min, C_max = get_matrices_opt(200, 20)
@@ -40,15 +40,28 @@ if __name__ == '__main__':
         sns_plot.savefig("solution_per_iteration.png")
 
     if RUN_GRID:
-        rows_num = np.linspace(10, 1000, 10, dtype=int)
-        cols_num = np.linspace(4, 50, 10, dtype=int)
+        rows_num = np.linspace(10, 300, 5, dtype=int)
+        cols_num = np.linspace(4, 30, 5, dtype=int)
+
+        all_dfs = []
         for n_row, n_col, run_id in zip(rows_num, cols_num, range(len(rows_num))):
+
+            problem_size = n_row * n_col
 
             print(f"-----run {run_id}: {n_row} rows and {n_col} columns--------")
 
             M, W, R, C_min, C_max = get_matrices_opt(n_row, n_col)
 
-            iterative_improvement(M, W, R, C_min, C_max, max_iter=10)
+            res_h, t_h = iterative_improvement(M, W, R, C_min, C_max, max_iter=10, verbose=False)
             res_, t = run_linprog(W, C_max.tolist(), R.tolist())
 
-            print(f"Optimum found with solver in {t} seconds")
+            all_dfs.append(pd.DataFrame(
+                data={
+                    'time': [t_h, t],
+                    'method': ['linprog', 'heuristic'],
+                    'prob_size': [problem_size, problem_size]
+                }))
+
+        plot_df = pd.concat(all_dfs)
+        sns_plot = sns.relplot(data=plot_df, x='prob_size', y='time', hue='method', kind='line')
+        sns_plot.savefig("time_to_solution.png")
