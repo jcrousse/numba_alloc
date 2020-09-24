@@ -57,7 +57,7 @@ if __name__ == '__main__':
 
             all_dfs.append(pd.DataFrame(
                 data={
-                    'time': [t_h, t],
+                    'time': [t, t_h],
                     'method': ['linprog', 'heuristic'],
                     'prob_size': [problem_size, problem_size]
                 }))
