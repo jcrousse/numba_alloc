@@ -38,6 +38,7 @@ if __name__ == '__main__':
         sns_plot.set(ylim=(0, max(res_h) * 1.1))
 
         sns_plot.savefig("solution_per_iteration.png")
+        plot_df.to_csv("solution_per_iteration.csv")
 
     if RUN_GRID:
         rows_num = np.linspace(10, 300, 5, dtype=int)
@@ -63,5 +64,6 @@ if __name__ == '__main__':
                 }))
 
         plot_df = pd.concat(all_dfs)
+        plot_df.to_csv("time_to_solution.csv")
         sns_plot = sns.relplot(data=plot_df, x='prob_size', y='time', hue='method', kind='line')
         sns_plot.savefig("time_to_solution.png")
