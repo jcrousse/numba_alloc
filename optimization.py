@@ -150,6 +150,7 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_ite
     :param c_min: col constraints vector C_min
     :param c_max: col constraints vector C_max
     :param max_iter: maximal number of improvement iterations
+    :param verbose: whether to print intermediary output or not
     """
 
     total_time = 0
