@@ -48,12 +48,3 @@ if __name__ == '__main__':
     silly_operation[64, 64](my_matrix, result_m)
 
     polar_distance(rho1, theta1, rho2, theta2)
-
-
-# TODO:
-#  - Compare numpy multiplication and https://numba.pydata.org/numba-doc/dev/cuda/examples.html
-#  - Create random matrix and transform it to 1 and 0s on CUDA.  Use ints instead of floats
-#  - Create additional CUDA functions called from the main one
-#  - Random removals +  Random add
-#  - Random refill/adjust: use shared memory counting breaches.
-#  - Figure out efficient way to get totals in between loops.
