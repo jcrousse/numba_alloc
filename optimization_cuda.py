@@ -8,7 +8,7 @@ TPB = 16
 
 
 @cuda.jit
-def optimize(M, O):
+def optimize(M, tmp_r,  O):
     """
     Perform matrix multiplication of C = A * B
     Each thread computes one element of the result matrix C
@@ -45,19 +45,22 @@ def optimize(M, O):
     # Wait until all threads finish computing
     # cuda.syncthreads()
 
-    for k in range(TPB):
-        sR[0, k] = k
 
-    O[x, y] = (1 - M[x, y])
+    sR[0, 0] = 0
+    cuda.syncthreads()
+    tmp = cuda.atomic.add(tmp_r, x, 1)
+
+    O[x, y] = tmp
 
 
 if __name__ == '__main__':
 
-    n_r = TPB * 64
-    n_c = TPB
+    n_r = TPB * 2 ** 13
+    n_c = TPB ** 2
     # The data array
     np.random.seed(123)
     M = np.random.randint(0, 2, (n_r, n_c))
+    added_count = np.zeros(n_r, dtype=np.int32)
 
 
     M_global_mem = cuda.to_device(M)
@@ -70,29 +73,19 @@ if __name__ == '__main__':
     blockspergrid = (blockspergrid_x, blockspergrid_y)
 
     # Start the kernel
-    optimize[blockspergrid, threadsperblock](M_global_mem, O_global_mem)
+    optimize[blockspergrid, threadsperblock](M_global_mem, added_count,  O_global_mem)
     res = O_global_mem.copy_to_host()
 
     print(res)
 
 # TODO:
-#  How does the base example shared memory copy work? How to avoid doing the same copy as many
-#  times as the number of threads per block?
-#  - Benchmark move to/from GPU, maximal size, random number generation, ...
 #  - Start from best solution per row
-#  - Random assignment of can_add / can_remove per block.
-#       - Give max, min, second max, second min...
-#       - Adjsut value so that can add == can remove per block
-#       - random split into row blocks
-#       - Result into a matrix n_row_block rows and n_cols
-#       - Need to find a way. Shared memory per thread with the M matrix, and swap values
-#           where can add and can remove.
-#  - Instead, 4 steps: 1)Add 2)adjust 3)remove 4)adjust
-#  - Increment counter in shared memory when add/remove
-#  - Generate an ordered list in shared memory to decide unequivocally which items should be.
-#  Maybe try by running random num until get value >0.95 and take next memory space available
-#  added or removed to adjust: Fille one shared array with random numbers, then another one with idx
-#  - For each block, add and remove the ones that are randomly assigned to add/remove
-#  - Need to assign same total add/remove per block
-#  - random flip of rows/cols at each iteration
+#  - Wrap all the stuff in the numba solution (start from best, diagnose at each round)
+#  - One array to keep count of added / removed items
+#  - Do the random add and count added elements
+#  >> Checkpoint here: Do we see the number only increasing and the add count being correct ?
+#  - Separate array for 'queue'. Set to 0 for everyone in the thread then use
+#       atomic add to get a queue number. If lower than number to adjust then adjust
+#  - >> Checkpoint: Do we see the contraints being met again ? Do we get closer to solution ?
+#  - Do the same for removal and adjust
 

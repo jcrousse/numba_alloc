@@ -176,13 +176,13 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_ite
 
 if __name__ == '__main__':
     np.random.seed(123)
-    n_row = 1000
-    n_col = 20
+    n_row = 2 ** 17
+    n_col = 256
     M = np.zeros((n_row, n_col)).astype(np.int32)
     W = np.random.random((n_row, n_col)).astype(np.float32)
     R = np.random.randint(0, n_col, n_row).astype(np.int32)
-    C_max = np.random.randint(150, n_row, n_col).astype(np.int32)
-    C_min = C_max - 100
+    C_max = np.random.randint(0.1 * n_row, n_row, n_col).astype(np.int32)
+    C_min = C_max - n_row * 0.05
 
-    iterative_improvement(M, W, R, C_min, C_max, max_iter=10)
-    _ = 1
+    _, time_taken = iterative_improvement(M, W, R, C_min, C_max, max_iter=100, verbose=True)
+    print(time_taken)
