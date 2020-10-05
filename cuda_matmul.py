@@ -1,6 +1,6 @@
 from numba import cuda, float32
 import numpy as np
-import  math
+import math
 # Controls threads per block and shared memory usage.
 # The computation will be done on blocks of TPBxTPB elements.
 

@@ -8,7 +8,7 @@ TPB = 16
 
 
 @cuda.jit
-def optimize(M, tmp_r,  O):
+def iteration_improve_cuda(M, tmp_r, O):
     """
     Perform matrix multiplication of C = A * B
     Each thread computes one element of the result matrix C
@@ -16,13 +16,13 @@ def optimize(M, tmp_r,  O):
 
     # Define an array in the shared memory
     # The size and type of the arrays must be known at compile time
-    sM = cuda.shared.array(shape=(TPB, TPB), dtype=float32)
-    sR = cuda.shared.array(shape=(TPB, TPB), dtype=float32)
+    # sM = cuda.shared.array(shape=(TPB, TPB), dtype=float32)
+    # sR = cuda.shared.array(shape=(TPB, TPB), dtype=float32)
 
     x, y = cuda.grid(2)
 
-    tx = cuda.threadIdx.x
-    ty = cuda.threadIdx.y
+    # tx = cuda.threadIdx.x
+    # ty = cuda.threadIdx.y
 
     if x >= O.shape[0] and y >= O.shape[1]:
         # Quit if (x, y) is outside of valid C boundary
@@ -46,8 +46,7 @@ def optimize(M, tmp_r,  O):
     # cuda.syncthreads()
 
 
-    sR[0, 0] = 0
-    cuda.syncthreads()
+    # cuda.syncthreads()
     tmp = cuda.atomic.add(tmp_r, x, 1)
 
     O[x, y] = tmp
@@ -57,9 +56,12 @@ if __name__ == '__main__':
 
     n_r = TPB * 2 ** 13
     n_c = TPB ** 2
+
+    n_r = 128
+    n_c = 32
     # The data array
     np.random.seed(123)
-    M = np.random.randint(0, 2, (n_r, n_c))
+    M = np.random.randint(0, 2, (n_r, n_c)).astype(np.int32)
     added_count = np.zeros(n_r, dtype=np.int32)
 
 
@@ -73,7 +75,7 @@ if __name__ == '__main__':
     blockspergrid = (blockspergrid_x, blockspergrid_y)
 
     # Start the kernel
-    optimize[blockspergrid, threadsperblock](M_global_mem, added_count,  O_global_mem)
+    iteration_improve_cuda[blockspergrid, threadsperblock](M_global_mem, added_count, O_global_mem)
     res = O_global_mem.copy_to_host()
 
     print(res)

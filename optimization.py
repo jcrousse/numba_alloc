@@ -1,6 +1,8 @@
-from numba import njit, prange
+from numba import njit, prange, cuda
 import numpy as np
 import time
+from optimization_cuda import iteration_improve_cuda, TPB
+import math
 
 
 class Timer:
@@ -65,12 +67,21 @@ def n_add_remove(opt_matrix, c_min, c_max):
 
 
 @njit
-def iteration_improve(opt_matrix, c_min, c_max):
+def iteration_improve(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove):
     """Iterative improvement for optimization  (one round, needs to be called in a loop)
     -Calculates how column constraints are breached
     -Calculates how many can be added/removed per column
     -Randomly adds / remove cases to get closer to target
     """
+    for idx in prange(opt_matrix.shape[0]):
+        row_values = opt_matrix[idx, :]
+        improve_single_row(row_values, over_alloc_pct, under_alloc_pct, can_add, can_remove)
+
+    return opt_matrix
+
+
+@njit
+def get_iteration_parameters(opt_matrix, c_min, c_max):
 
     to_remove, to_add, can_add, can_remove = n_add_remove(opt_matrix, c_min, c_max)
 
@@ -82,12 +93,7 @@ def iteration_improve(opt_matrix, c_min, c_max):
     over_alloc_pct = to_remove_adj / opt_matrix.shape[0]
     under_alloc_pct = to_add_adj / opt_matrix.shape[0]
 
-    for idx in prange(opt_matrix.shape[0]):
-        row_values = opt_matrix[idx, :]
-        improve_single_row(row_values, over_alloc_pct, under_alloc_pct, can_add, can_remove)
-
-    return opt_matrix
-
+    return over_alloc_pct, under_alloc_pct, can_add, can_remove
 
 @njit
 def improve_single_row(opt_vector, over_alloc_pct, under_alloc_pct, can_add, can_remove):
@@ -140,7 +146,8 @@ def print_solution_diagnostic(opt_matrix, c_min, c_max, verbose):
     return over_alloc, under_alloc
 
 
-def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_iter=None, verbose=True):
+def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter=None, verbose=True,
+                          use_cuda=False):
     """
     get the solution from the optimal_result  function then iteratively calls the iteration_improve function
     until either a valid solution is found or a maximal number of iterations has been reached.
@@ -166,7 +173,16 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_ite
         solution_vals.append(np.sum(np.multiply(opt_matrix, w_matrix)))
         iteration_n += 1
         with Timer(f"Iteration {iteration_n} :\n", verbose) as t:
-            opt_matrix = iteration_improve(opt_matrix, c_min, c_max)
+            if use_cuda:
+                if iteration_n == 1:
+                    optmatrix_d = cuda.to_device(M)
+                    added_c = np.zeros(n_row, dtype=np.int32)
+                    result_d = cuda.to_device(np.zeros(opt_matrix.shape))
+                iteration_improve_cuda[threadsperblock, blockspergrid](optmatrix_d, added_c, result_d)
+            else:
+                over_alloc_pct, under_alloc_pct, can_add, can_remove = get_iteration_parameters(opt_matrix, c_min,
+                                                                                                c_max)
+                opt_matrix = iteration_improve(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
             over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max, verbose)
             total_time += t.get_time_s()
     solution_vals.append(np.sum(np.multiply(opt_matrix, w_matrix)))
@@ -175,14 +191,27 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector,  c_min, c_max, max_ite
 
 
 if __name__ == '__main__':
+
+    n_row = TPB * 2 ** 7  # works until TPB * 2 ** 6
+    n_col = TPB ** 2
+
+    # n_row = 128
+    # n_col = 32
+
     np.random.seed(123)
-    n_row = 2 ** 17
-    n_col = 256
+
+
     M = np.zeros((n_row, n_col)).astype(np.int32)
     W = np.random.random((n_row, n_col)).astype(np.float32)
     R = np.random.randint(0, n_col, n_row).astype(np.int32)
     C_max = np.random.randint(0.1 * n_row, n_row, n_col).astype(np.int32)
     C_min = C_max - n_row * 0.05
 
-    _, time_taken = iterative_improvement(M, W, R, C_min, C_max, max_iter=100, verbose=True)
+    threadsperblock = (TPB, TPB)
+    blockspergrid_x = int(math.ceil(M.shape[0] / threadsperblock[1]))
+    blockspergrid_y = int(math.ceil(M.shape[1] / threadsperblock[0]))
+    blockspergrid = (blockspergrid_x, blockspergrid_y)
+
+    _, time_taken = iterative_improvement(M, W, R, C_min, C_max, max_iter=100, verbose=True,
+                                          use_cuda=True)
     print(time_taken)
