@@ -176,9 +176,9 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter
             if use_cuda:
                 if iteration_n == 1:
                     optmatrix_d = cuda.to_device(M)
-                    added_c = np.zeros(n_row, dtype=np.int32)
+                    added_c = np.zeros(n_r, dtype=np.int32)
                     result_d = cuda.to_device(np.zeros(opt_matrix.shape))
-                iteration_improve_cuda[threadsperblock, blockspergrid](optmatrix_d, added_c, result_d)
+                iteration_improve_cuda[blockspergrid, threadsperblock](optmatrix_d, added_c, result_d)
             else:
                 over_alloc_pct, under_alloc_pct, can_add, can_remove = get_iteration_parameters(opt_matrix, c_min,
                                                                                                 c_max)
@@ -192,25 +192,33 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter
 
 if __name__ == '__main__':
 
-    n_row = TPB * 2 ** 7  # works until TPB * 2 ** 6
-    n_col = TPB ** 2
+    n_r = TPB * 2 ** 7
+    n_c = TPB ** 2
 
     # n_row = 128
     # n_col = 32
 
     np.random.seed(123)
+    M = np.random.randint(0, 2, (n_r, n_c)).astype(np.int32)
+    added_count = np.zeros(n_r, dtype=np.int32)
 
 
-    M = np.zeros((n_row, n_col)).astype(np.int32)
-    W = np.random.random((n_row, n_col)).astype(np.float32)
-    R = np.random.randint(0, n_col, n_row).astype(np.int32)
-    C_max = np.random.randint(0.1 * n_row, n_row, n_col).astype(np.int32)
-    C_min = C_max - n_row * 0.05
+    M_global_mem = cuda.to_device(M)
+    O_global_mem = cuda.device_array((n_r, n_c))  # [32 x 16] matrix result
+
+    M = np.zeros((n_r, n_c)).astype(np.int32)
+    W = np.random.random((n_r, n_c)).astype(np.float32)
+    R = np.random.randint(0, n_c, n_r).astype(np.int32)
+    C_max = np.random.randint(0.1 * n_r, n_r, n_c).astype(np.int32)
+    C_min = C_max - n_r * 0.05
 
     threadsperblock = (TPB, TPB)
     blockspergrid_x = int(math.ceil(M.shape[0] / threadsperblock[1]))
     blockspergrid_y = int(math.ceil(M.shape[1] / threadsperblock[0]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
+
+    # Start the kernel
+    # iteration_improve_cuda[blockspergrid, threadsperblock](M_global_mem, added_count, O_global_mem)
 
     _, time_taken = iterative_improvement(M, W, R, C_min, C_max, max_iter=100, verbose=True,
                                           use_cuda=True)

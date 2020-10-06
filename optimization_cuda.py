@@ -57,8 +57,6 @@ if __name__ == '__main__':
     n_r = TPB * 2 ** 13
     n_c = TPB ** 2
 
-    n_r = 128
-    n_c = 32
     # The data array
     np.random.seed(123)
     M = np.random.randint(0, 2, (n_r, n_c)).astype(np.int32)
