@@ -1,6 +1,8 @@
 from numba import cuda, float32
 import numpy as np
 import math
+
+
 from numba.cuda.random import xoroshiro128p_uniform_float32
 # Controls threads per block and shared memory usage.
 # The computation will be done on blocks of TPBxTPB elements.
@@ -8,48 +10,44 @@ TPB = 16
 
 
 @cuda.jit
-def iteration_improve_cuda(M, tmp_r, O):
+def iteration_improve_cuda(in_solution, added_count, over_alloc_pct, can_add, rn_states,
+                           get_position, out_solution):
     """
     Perform matrix multiplication of C = A * B
     Each thread computes one element of the result matrix C
     """
-
-    # Define an array in the shared memory
-    # The size and type of the arrays must be known at compile time
-    # sM = cuda.shared.array(shape=(TPB, TPB), dtype=float32)
-    # sR = cuda.shared.array(shape=(TPB, TPB), dtype=float32)
 
     x, y = cuda.grid(2)
 
     # tx = cuda.threadIdx.x
     # ty = cuda.threadIdx.y
 
-    if x >= O.shape[0] and y >= O.shape[1]:
+    if x >= out_solution.shape[0] and y >= out_solution.shape[1]:
         # Quit if (x, y) is outside of valid C boundary
         return
 
-    # Each thread computes one element in the result matrix.
-    # The dot product is chunked into dot products of TPB-long vectors.
-    # tmp = 0.
+    flat_idx = out_solution.shape[1] * x + y
+    rand_toss = xoroshiro128p_uniform_float32(rn_states, flat_idx)
 
-    # Preload data into shared memory
-    # sM[tx, ty] = M[x, y]
+    out_solution[x, y] =  -1 # in_solution[x, y]
 
-    # Wait until all threads finish preloading
-    # cuda.syncthreads()
+    if in_solution[x, y] == 1 and over_alloc_pct[y] > rand_toss:
+        out_solution[x, y] = -1  # 0
+        _ = cuda.atomic.add(added_count, x, 1)
 
-    # Computes partial product on the shared memory
-    # for k in range(TPB):
-    #     tmp += sM[tx, k]
+    cuda.syncthreads()
 
-    # Wait until all threads finish computing
-    # cuda.syncthreads()
+    out_solution[x, y] = added_count[x] +10
+    if in_solution[x, y] == 0 and can_add[y] > 0:
+        position_queue = cuda.atomic.add(get_position, x, 1)
+
+        if position_queue <= added_count[x]:
+            out_solution[x, y] = 1
+            _ = cuda.atomic.add(added_count, x, -1)
+        # else:
+        #     out_solution[x, y] = added_count[x]
 
 
-    # cuda.syncthreads()
-    tmp = cuda.atomic.add(tmp_r, x, 1)
-
-    O[x, y] = tmp
 
 
 if __name__ == '__main__':
@@ -79,8 +77,6 @@ if __name__ == '__main__':
     print(res)
 
 # TODO:
-#  - Start from best solution per row
-#  - Wrap all the stuff in the numba solution (start from best, diagnose at each round)
 #  - One array to keep count of added / removed items
 #  - Do the random add and count added elements
 #  >> Checkpoint here: Do we see the number only increasing and the add count being correct ?
