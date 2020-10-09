@@ -8,7 +8,7 @@ def prod(iterable):
 
 
 def blockspergrid_threadsperblock(n_rows, n_cols):
-    threadsperblock =  (1, n_cols) #(TPB, TPB) #
+    threadsperblock = (1, n_cols)
     blockspergrid_x = int(math.ceil(n_rows / threadsperblock[0]))
     blockspergrid_y = int(math.ceil(n_cols / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)

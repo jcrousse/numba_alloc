@@ -30,30 +30,37 @@ def random_remove(opt_matrix_in, cnt_per_row, remove_prob, rn_states, opt_matrix
 
 
 @cuda.jit
-def adjust_after_remove(opt_matrix_in, ticket_count, rn_states, add_probability, opt_matrix_out):
+def adjust_after_remove(opt_matrix_in, ticket_count, idx_test, opt_matrix_out):
     """
-    adjusts each row to get back to the initial number of 1s per row.
-    Number of elements to add per row is given in cnt_per_row
-    some elements have a higher weight (more likely to be added) given by add_probability
-    if not enough elements have an add_probability to reach the target number, elements are picked from
-    other columns at random.
+    Finds the index
     :return:
     """
     x, y = cuda.grid(2)
-    if x >= opt_matrix_in.shape[0] and y >= opt_matrix_in.shape[1]:
+    if x >= opt_matrix_in.shape[0] and y >= 1:
         return
 
-    flat_idx = opt_matrix_in.shape[1] * x + y
-    rand_toss = xoroshiro128p_uniform_float32(rn_states, flat_idx)
+    for k in range(8):
+        idx_next = idx_test[k]
+        opt_matrix_out[x, idx_next] = 10
 
-    # todo: order based on probability
-    if add_probability[y] > 0 and opt_matrix_in[x, y] == 0:
-        # time_waster = 0.0
-        # while time_waster < rand_toss:
-        #     time_waster += 0.000001
-        queue_number = cuda.atomic.add(ticket_count, x, 1)
-        if queue_number > 0:
-            opt_matrix_out[x, y] = queue_number
+
+def create_permutaion_table(can_add, n_permutations=64):
+    """
+    creates a table with random permutation of column indices.
+    Goal is to order of column selection for adjustments.
+    Columns with non-zero probabilities in prob_vector ar picked before the rest.
+    Columns with higher probabilities in prob_vector are more likely to be high in the ordering
+    """
+    prob_vector = can_add / can_add.sum()
+    non_zero_prob = np.array(np.where(prob_vector > 0))[0]
+    zero_prob = np.array(np.where(prob_vector <= 0))[0]
+    all_rows = []
+    for i in range(n_permutations):
+        shuffle_nonz = np.random.choice(non_zero_prob, non_zero_prob.shape, p=prob_vector[non_zero_prob], replace=False)
+        shuffle_z = np.random.choice(zero_prob, zero_prob.shape, replace=False)
+        full_row = np.hstack([shuffle_nonz, shuffle_z])
+        all_rows.append(full_row)
+    return np.vstack(all_rows)
 
 
 if __name__ == '__main__':
@@ -98,17 +105,20 @@ if __name__ == '__main__':
     equal_arrays = comparison.all()
 
 
-    add_prob = np.random.random(n_cols) * (1 - over_under_columns)
-    add_prob_scaled = add_prob / sum(add_prob)
-    add_prob_d = cuda.to_device(add_prob)
+    can_add = np.random.randint(1, 20, n_cols) * (1 - over_under_columns)
+    can_add[20] = 500
+    can_add[50] = 500
+    perm_table = create_permutaion_table(can_add)
+
+    # add_prob_scaled = add_prob / sum(add_prob)
+    # add_prob_d = cuda.to_device(add_prob)
     idx_test = cuda.to_device(np.array([2, 3, 4, 10, 11, 12, 14, 16]))
     ticket_count = cuda.to_device(np.zeros(n_rows))
 
     adjust_after_remove[blockspergrid, threadsperblock](
         opt_mat_in_d,
         ticket_count,
-        rn_states,
-        add_prob_d,
+        idx_test,
         opt_mat_out_d
     )
 
@@ -117,7 +127,5 @@ if __name__ == '__main__':
 
 
 # TODO:
-#  - Fixed permutation table to give a incrementing number to each col
-#  - ? how to put the cols with more can_add closer to low numbers in perm table?
-#  - ? How to skip gaps in perm table ? (e.g. row by row gaps)
-#       Change the thread/block structure, and do it sequentially (one thread per row..).
+#  - If should add and can't (because already 1) -> atomic increment of add thing.
+#  - Next function: compare to max ad add if necessary.
