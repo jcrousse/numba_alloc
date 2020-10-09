@@ -47,9 +47,13 @@ def adjust_after_remove(opt_matrix_in, ticket_count, idx_test, opt_matrix_out):
 def create_permutaion_table(can_add, n_permutations=64):
     """
     creates a table with random permutation of column indices.
-    Goal is to order of column selection for adjustments.
-    Columns with non-zero probabilities in prob_vector ar picked before the rest.
-    Columns with higher probabilities in prob_vector are more likely to be high in the ordering
+    Each row in resulting table is a random permutation
+    Number of rows is given by n_permutations.
+    Each permutation gives, in each column, the position in the permutation.
+
+    Columns with non-zero probabilities in prob_vector ar ordered higher than the rest.
+    Columns with higher probabilities in prob_vector are proportionaly more likely to be
+      high in the ordering
     """
     prob_vector = can_add / can_add.sum()
     non_zero_prob = np.array(np.where(prob_vector > 0))[0]
@@ -59,7 +63,9 @@ def create_permutaion_table(can_add, n_permutations=64):
         shuffle_nonz = np.random.choice(non_zero_prob, non_zero_prob.shape, p=prob_vector[non_zero_prob], replace=False)
         shuffle_z = np.random.choice(zero_prob, zero_prob.shape, replace=False)
         full_row = np.hstack([shuffle_nonz, shuffle_z])
-        all_rows.append(full_row)
+        ordered = np.arange(len(full_row))
+        ordered[full_row] = np.arange(len(full_row)) + 1
+        all_rows.append(ordered)
     return np.vstack(all_rows)
 
 
@@ -127,5 +133,7 @@ if __name__ == '__main__':
 
 
 # TODO:
-#  - If should add and can't (because already 1) -> atomic increment of add thing.
-#  - Next function: compare to max ad add if necessary.
+#  - Calculate can add/can remove, then prep the permutation table
+#  - If should add and can't (because already 1) -> atomic increment of add_count.
+#  - Next function: If can add (set to 0) and <= add_count -> Do the add!
+#  - Same in reverse for removal.
