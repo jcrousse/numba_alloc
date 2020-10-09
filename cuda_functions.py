@@ -5,13 +5,15 @@ from helpers import prod, blockspergrid_threadsperblock
 
 
 @cuda.jit
-def random_remove(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_matrix_out):
+def random_modify(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_matrix_out, remove=False):
     """
     Random removal(adding) of elements by randomly switching value in opt_matrix from 1 to 0 (0 to 1).
     Probability of being removed(added) given by prob_per_col
     keeps a count of the total number of elements removed(added) per row in cnt_per_row
     random states for random number generator given in remove_prob
     """
+    old_value = 1 if remove else 0
+    new_value = 0 if remove else 1
     x, y = cuda.grid(2)
     if x >= opt_matrix_out.shape[0] and y >= opt_matrix_out.shape[1]:
         return
@@ -21,16 +23,16 @@ def random_remove(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_matri
 
     opt_matrix_out[x, y] = opt_matrix_in[x, y]
 
-    if opt_matrix_in[x, y] == 1 and prob_per_col[y] > rand_toss:
-        opt_matrix_out[x, y] = 0
-        opt_matrix_in[x, y] = 0
+    if opt_matrix_in[x, y] == old_value and prob_per_col[y] > rand_toss:
+        opt_matrix_out[x, y] = new_value
+        opt_matrix_in[x, y] = new_value
         _ = cuda.atomic.add(cnt_per_row, x, 1)
 
     cuda.syncthreads()
 
 
 @cuda.jit
-def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row):
+def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row, remove=False):
     """
     Each element that should be added(removed) but can't be added(removed) increments the add_count.
     After this step, every element that can be added(removed) and which is n-th position in
@@ -39,12 +41,13 @@ def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row):
     randomly generated
     :param
     """
+    old_val = 0 if remove else 1
     x, y = cuda.grid(2)
     if x >= opt_matrix_in.shape[0] and y >= opt_matrix_in.shape[1]:
         return
 
     order_idx = order_per_row[x]
-    if opt_matrix_in[x, y] == 1 and perm_table[order_idx, y] <= cnt_per_row[x]:
+    if opt_matrix_in[x, y] == old_val and perm_table[order_idx, y] <= cnt_per_row[x]:
         _ = cuda.atomic.add(cnt_per_row, x, 1)
 
 
@@ -93,12 +96,13 @@ if __name__ == '__main__':
     rn_states = create_xoroshiro128p_states(prod(blockspergrid) * prod(threadsperblock),
                                             seed=np.random.randint(0, 10000))
 
-    random_remove[blockspergrid, threadsperblock](
+    random_modify[blockspergrid, threadsperblock](
         opt_mat_in_d,
         row_change_cnt,
         remove_prob,
         rn_states,
-        opt_mat_out_d
+        opt_mat_out_d,
+        True
     )
 
     in_rows_totals = np.sum(opt_mat_in, axis=1)
@@ -133,7 +137,8 @@ if __name__ == '__main__':
         opt_mat_in_d,
         row_change_cnt,
         perm_table_d,
-        perm_per_row
+        perm_per_row,
+        False
     )
     print(row_change_cnt.copy_to_host())
 
@@ -143,6 +148,6 @@ if __name__ == '__main__':
 
 # TODO:
 #  - Calculate can add/can remove, then prep the permutation table
-#  - If should add and can't (because already 1) -> atomic increment of add_count.
+#  - If should add and can't (because already 1) -> atomic increment of add_count. --DONE
 #  - Next function: If can add (set to 0) and <= add_count -> Do the add!
 #  - Same in reverse for removal.
