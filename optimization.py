@@ -1,5 +1,5 @@
 from numba import njit, prange, cuda
-from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
+from numba.cuda.random import create_xoroshiro128p_states
 
 import numpy as np
 import time
@@ -232,9 +232,9 @@ if __name__ == '__main__':
     C_max = np.random.randint(0.1 * n_r, n_r, n_c).astype(np.int32)
     C_min = C_max - n_r * 0.05
 
-    threadsperblock = (TPB, TPB)
-    blockspergrid_x = int(math.ceil(M.shape[0] / threadsperblock[1]))
-    blockspergrid_y = int(math.ceil(M.shape[1] / threadsperblock[0]))
+    threadsperblock =  (1, n_c) #(TPB, TPB) #
+    blockspergrid_x = int(math.ceil(M.shape[0] / threadsperblock[0]))
+    blockspergrid_y = int(math.ceil(M.shape[1] / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
 
     # Start the kernel

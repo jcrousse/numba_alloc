@@ -17,7 +17,7 @@ Basicaly:
 * Maximize  
 <img src="https://latex.codecogs.com/gif.latex?\sum_{i, j} m_{i, j} * W_{i, j}" />
 * with   
-<img src="https://latex.codecogs.com/gif.latex?\sum_{j} m_{i, j} \le R_{i} \forall i \in I" />
+<img src="https://latex.codecogs.com/gif.latex?\sum_{j} m_{i, j} \eq R_{i} \forall i \in I" />
 * and   
 <img src="https://latex.codecogs.com/gif.latex?Cmin_{j} \le \sum_{i} m_{i, j} \le Cmax_{j} \forall j \in J" />
 * and   

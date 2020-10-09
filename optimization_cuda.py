@@ -10,8 +10,8 @@ TPB = 16
 
 
 @cuda.jit
-def iteration_improve_cuda(in_solution, added_count, over_alloc_pct, can_add, rn_states,
-                           get_position, out_solution):
+def iteration_improve_cuda(opt_matrix_in, added_count, over_alloc_pct, can_add, rn_states,
+                           get_position, opt_matrix_out):
     """
     Perform matrix multiplication of C = A * B
     Each thread computes one element of the result matrix C
@@ -22,32 +22,30 @@ def iteration_improve_cuda(in_solution, added_count, over_alloc_pct, can_add, rn
     # tx = cuda.threadIdx.x
     # ty = cuda.threadIdx.y
 
-    if x >= out_solution.shape[0] and y >= out_solution.shape[1]:
+    if x >= opt_matrix_out.shape[0] and y >= opt_matrix_out.shape[1]:
         # Quit if (x, y) is outside of valid C boundary
         return
 
-    flat_idx = out_solution.shape[1] * x + y
+    flat_idx = opt_matrix_out.shape[1] * x + y
     rand_toss = xoroshiro128p_uniform_float32(rn_states, flat_idx)
 
-    out_solution[x, y] =  -1 # in_solution[x, y]
+    opt_matrix_out[x, y] = opt_matrix_in[x, y]
 
-    if in_solution[x, y] == 1 and over_alloc_pct[y] > rand_toss:
-        out_solution[x, y] = -1  # 0
-        _ = cuda.atomic.add(added_count, x, 1)
+    if opt_matrix_in[x, y] == 1 and over_alloc_pct[y] > rand_toss:
+        opt_matrix_out[x, y] = 0
+        total = cuda.atomic.add(added_count, x, 1)
 
     cuda.syncthreads()
 
-    out_solution[x, y] = added_count[x] +10
-    if in_solution[x, y] == 0 and can_add[y] > 0:
+    if opt_matrix_in[x, y] == 0 and can_add[y] > 0:
         position_queue = cuda.atomic.add(get_position, x, 1)
-
-        if position_queue <= added_count[x]:
-            out_solution[x, y] = 1
+        if position_queue <= total:
+            opt_matrix_out[x, y] = 1
             _ = cuda.atomic.add(added_count, x, -1)
         # else:
         #     out_solution[x, y] = added_count[x]
 
-
+    #out_solution[x, y] = cuda.blockIdx.y
 
 
 if __name__ == '__main__':
@@ -65,13 +63,16 @@ if __name__ == '__main__':
     O_global_mem = cuda.device_array((n_r, n_c))  # [32 x 16] matrix result
 
     # Configure the blocks
-    threadsperblock = (TPB, TPB)
-    blockspergrid_x = int(math.ceil(M.shape[0] / threadsperblock[1]))
-    blockspergrid_y = int(math.ceil(M.shape[1] / threadsperblock[0]))
-    blockspergrid = (blockspergrid_x, blockspergrid_y)
+    threadsperblock = n_c
+    # blockspergrid_x = int(math.ceil(M.shape[0] / threadsperblock[1]))
+    # blockspergrid_y = int(math.ceil(M.shape[1] / threadsperblock[0]))
+    blockspergrid = n_r # (blockspergrid_x, blockspergrid_y)
 
     # Start the kernel
-    iteration_improve_cuda[blockspergrid, threadsperblock](M_global_mem, added_count, O_global_mem)
+    iteration_improve_cuda[blockspergrid, threadsperblock](
+        M_global_mem,
+        added_count,
+        O_global_mem)
     res = O_global_mem.copy_to_host()
 
     print(res)
