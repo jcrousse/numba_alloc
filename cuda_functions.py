@@ -5,11 +5,11 @@ from helpers import prod, blockspergrid_threadsperblock
 
 
 @cuda.jit
-def random_remove(opt_matrix_in, cnt_per_row, remove_prob, rn_states, opt_matrix_out):
+def random_remove(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_matrix_out):
     """
-    Random removal of elements (switch value in opt_matrix from 1 to 0).
-    Probability of being removed given by remove_prob
-    keeps a count of the total number of elements removed per row in cnt_per_row
+    Random removal(adding) of elements by randomly switching value in opt_matrix from 1 to 0 (0 to 1).
+    Probability of being removed(added) given by prob_per_col
+    keeps a count of the total number of elements removed(added) per row in cnt_per_row
     random states for random number generator given in remove_prob
     """
     x, y = cuda.grid(2)
@@ -21,7 +21,7 @@ def random_remove(opt_matrix_in, cnt_per_row, remove_prob, rn_states, opt_matrix
 
     opt_matrix_out[x, y] = opt_matrix_in[x, y]
 
-    if opt_matrix_in[x, y] == 1 and remove_prob[y] > rand_toss:
+    if opt_matrix_in[x, y] == 1 and prob_per_col[y] > rand_toss:
         opt_matrix_out[x, y] = 0
         opt_matrix_in[x, y] = 0
         _ = cuda.atomic.add(cnt_per_row, x, 1)
@@ -30,18 +30,22 @@ def random_remove(opt_matrix_in, cnt_per_row, remove_prob, rn_states, opt_matrix
 
 
 @cuda.jit
-def adjust_after_remove(opt_matrix_in, ticket_count, idx_test, opt_matrix_out):
+def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row):
     """
-    Finds the index
-    :return:
+    Each element that should be added(removed) but can't be added(removed) increments the add_count.
+    After this step, every element that can be added(removed) and which is n-th position in
+    the ordered list of elements to add(remove) is added(removed) if n <= add_count
+    :param perm_table: column order permutation to use for this row, among all column orders
+    randomly generated
+    :param
     """
     x, y = cuda.grid(2)
-    if x >= opt_matrix_in.shape[0] and y >= 1:
+    if x >= opt_matrix_in.shape[0] and y >= opt_matrix_in.shape[1]:
         return
 
-    for k in range(8):
-        idx_next = idx_test[k]
-        opt_matrix_out[x, idx_next] = 10
+    order_idx = order_per_row[x]
+    if opt_matrix_in[x, y] == 1 and perm_table[order_idx, y] <= cnt_per_row[x]:
+        _ = cuda.atomic.add(cnt_per_row, x, 1)
 
 
 def create_permutaion_table(can_add, n_permutations=64):
@@ -84,7 +88,6 @@ if __name__ == '__main__':
     row_change_cnt = cuda.to_device(np.zeros(n_rows))
     remove_prob = cuda.to_device(np.random.random(n_cols) * over_under_columns)
 
-
     blockspergrid, threadsperblock = blockspergrid_threadsperblock(n_rows, n_cols)
 
     rn_states = create_xoroshiro128p_states(prod(blockspergrid) * prod(threadsperblock),
@@ -110,23 +113,29 @@ if __name__ == '__main__':
     comparison = out_mat == in_matrix_after
     equal_arrays = comparison.all()
 
-
     can_add = np.random.randint(1, 20, n_cols) * (1 - over_under_columns)
-    can_add[20] = 500
-    can_add[50] = 500
-    perm_table = create_permutaion_table(can_add)
+    add_mask = np.hstack([np.ones(10), np.zeros(n_cols - 10)])
+    can_add_adjust = can_add * add_mask
+
+    n_permutations = 2
+    perm_table = create_permutaion_table(can_add, n_permutations)
+    perm_table_d = cuda.to_device(perm_table)
+
+    perm_per_row = cuda.to_device(np.random.randint(0, n_permutations, n_rows))
 
     # add_prob_scaled = add_prob / sum(add_prob)
     # add_prob_d = cuda.to_device(add_prob)
     idx_test = cuda.to_device(np.array([2, 3, 4, 10, 11, 12, 14, 16]))
     ticket_count = cuda.to_device(np.zeros(n_rows))
 
-    adjust_after_remove[blockspergrid, threadsperblock](
+
+    adjust_add_count[blockspergrid, threadsperblock](
         opt_mat_in_d,
-        ticket_count,
-        idx_test,
-        opt_mat_out_d
+        row_change_cnt,
+        perm_table_d,
+        perm_per_row
     )
+    print(row_change_cnt.copy_to_host())
 
     transformed_out = opt_mat_out_d.copy_to_host()
     count_per_row = ticket_count.copy_to_host()
