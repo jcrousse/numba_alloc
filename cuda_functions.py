@@ -5,7 +5,7 @@ from helpers import prod, blockspergrid_threadsperblock
 
 
 @cuda.jit
-def random_modify(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_matrix_out, remove=False):
+def random_optimize(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_matrix_out, remove=False):
     """
     Random removal(adding) of elements by randomly switching value in opt_matrix from 1 to 0 (0 to 1).
     Probability of being removed(added) given by prob_per_col
@@ -32,7 +32,7 @@ def random_modify(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_matri
 
 
 @cuda.jit
-def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row, remove=False):
+def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row, remove=False, overwrite=False):
     """
     Each element that should be added(removed) but can't be added(removed) increments the add_count.
     After this step, every element that can be added(removed) and which is n-th position in
@@ -48,7 +48,10 @@ def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row, remo
 
     order_idx = order_per_row[x]
     if opt_matrix_in[x, y] == old_val and perm_table[order_idx, y] <= cnt_per_row[x]:
-        _ = cuda.atomic.add(cnt_per_row, x, 1)
+        if overwrite:
+            opt_matrix_in[x, y] = (1 - old_val)
+        else:
+            _ = cuda.atomic.add(cnt_per_row, x, 1)
 
 
 def create_permutaion_table(can_add, n_permutations=64):
@@ -76,6 +79,57 @@ def create_permutaion_table(can_add, n_permutations=64):
     return np.vstack(all_rows)
 
 
+class CudaIteration:
+    def __init__(self, nr, nc, n_perm=128):
+        self.blocks_per_grid, self.threads_per_block = blockspergrid_threadsperblock(nr, nc)
+        self.n_permutations = n_perm
+
+    def __call__(self, opt_matrix, prob_per_col, c_min, c_max, can_add):
+        """
+        single iteration of cuda optimization routine
+        """
+        opt_matrix_in = cuda.to_device(opt_matrix)
+        opt_matrix_out = cuda.to_device(opt_matrix)
+        prob_per_col_d = cuda.to_device(prob_per_col)
+
+        row_change_cnt = cuda.to_device(np.zeros(n_rows))
+
+        xrn_states = create_xoroshiro128p_states(prod(blockspergrid) * prod(threadsperblock),
+                                                 seed=np.random.randint(0, 10000))
+
+        # randomly remove
+        random_optimize[self.blocks_per_grid, self.threads_per_block](
+            opt_matrix_in,
+            row_change_cnt,
+            prob_per_col_d,
+            xrn_states,
+            opt_matrix_out,
+            True
+        )
+
+        # re add to adjust
+        perm_table = create_permutaion_table(can_add, self.n_permutations)
+
+        adjust_add_count[blockspergrid, threadsperblock](
+            opt_mat_in_d,
+            row_addremove_cnt,
+            perm_table_d,
+            perm_per_row,
+            False,
+            False
+        )
+        adjust_add_count[blockspergrid, threadsperblock](
+            opt_mat_in_d,
+            row_addremove_cnt,
+            perm_table_d,
+            perm_per_row,
+            False,
+            True
+        )
+
+    def adjustment(self, opt_mat_in_d):
+        pass
+
 if __name__ == '__main__':
     np.random.seed(123)
 
@@ -88,7 +142,7 @@ if __name__ == '__main__':
 
     over_under_columns = np.random.randint(0, 2, n_cols)
 
-    row_change_cnt = cuda.to_device(np.zeros(n_rows))
+    row_addremove_cnt = cuda.to_device(np.zeros(n_rows))
     remove_prob = cuda.to_device(np.random.random(n_cols) * over_under_columns)
 
     blockspergrid, threadsperblock = blockspergrid_threadsperblock(n_rows, n_cols)
@@ -96,9 +150,9 @@ if __name__ == '__main__':
     rn_states = create_xoroshiro128p_states(prod(blockspergrid) * prod(threadsperblock),
                                             seed=np.random.randint(0, 10000))
 
-    random_modify[blockspergrid, threadsperblock](
+    random_optimize[blockspergrid, threadsperblock](
         opt_mat_in_d,
-        row_change_cnt,
+        row_addremove_cnt,
         remove_prob,
         rn_states,
         opt_mat_out_d,
@@ -108,7 +162,7 @@ if __name__ == '__main__':
     in_rows_totals = np.sum(opt_mat_in, axis=1)
     out_mat = opt_mat_out_d.copy_to_host()
     out_rows_totals = np.sum(out_mat, axis=1)
-    added_cnt = row_change_cnt.copy_to_host()
+    added_cnt = row_addremove_cnt.copy_to_host()
     print(in_rows_totals - out_rows_totals)
     print(added_cnt)
 
@@ -117,12 +171,12 @@ if __name__ == '__main__':
     comparison = out_mat == in_matrix_after
     equal_arrays = comparison.all()
 
-    can_add = np.random.randint(1, 20, n_cols) * (1 - over_under_columns)
+    room_to_add = np.random.randint(1, 20, n_cols) * (1 - over_under_columns)
     add_mask = np.hstack([np.ones(10), np.zeros(n_cols - 10)])
-    can_add_adjust = can_add * add_mask
+    can_add_adjust = room_to_add * add_mask
 
     n_permutations = 2
-    perm_table = create_permutaion_table(can_add, n_permutations)
+    perm_table = create_permutaion_table(room_to_add, n_permutations)
     perm_table_d = cuda.to_device(perm_table)
 
     perm_per_row = cuda.to_device(np.random.randint(0, n_permutations, n_rows))
@@ -135,19 +189,36 @@ if __name__ == '__main__':
 
     adjust_add_count[blockspergrid, threadsperblock](
         opt_mat_in_d,
-        row_change_cnt,
+        row_addremove_cnt,
         perm_table_d,
         perm_per_row,
+        False,
         False
     )
-    print(row_change_cnt.copy_to_host())
+    print(row_addremove_cnt.copy_to_host())
 
     transformed_out = opt_mat_out_d.copy_to_host()
     count_per_row = ticket_count.copy_to_host()
 
+    # do_adjustment[blockspergrid, threadsperblock](
+    #     opt_mat_in_d,
+    #     row_addremove_cnt,
+    #     perm_table_d,
+    #     perm_per_row,
+    #     False
+    # )
+    adjust_add_count[blockspergrid, threadsperblock](
+        opt_mat_in_d,
+        row_addremove_cnt,
+        perm_table_d,
+        perm_per_row,
+        False,
+        True
+    )
 
 # TODO:
 #  - Calculate can add/can remove, then prep the permutation table
 #  - If should add and can't (because already 1) -> atomic increment of add_count. --DONE
 #  - Next function: If can add (set to 0) and <= add_count -> Do the add!
 #  - Same in reverse for removal.
+#  - Problems with in/out matrices? First argument can't be output?
