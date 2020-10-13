@@ -5,7 +5,7 @@ from helpers import prod, blockspergrid_threadsperblock
 
 
 @cuda.jit
-def random_optimize(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_matrix_out, remove=False):
+def random_optimize(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, remove=False):
     """
     Random removal(adding) of elements by randomly switching value in opt_matrix from 1 to 0 (0 to 1).
     Probability of being removed(added) given by prob_per_col
@@ -15,16 +15,13 @@ def random_optimize(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, opt_mat
     old_value = 1 if remove else 0
     new_value = 0 if remove else 1
     x, y = cuda.grid(2)
-    if x >= opt_matrix_out.shape[0] and y >= opt_matrix_out.shape[1]:
+    if x >= opt_matrix_in.shape[0] and y >= opt_matrix_in.shape[1]:
         return
 
-    flat_idx = opt_matrix_out.shape[1] * x + y
+    flat_idx = opt_matrix_in.shape[1] * x + y
     rand_toss = xoroshiro128p_uniform_float32(rn_states, flat_idx)
 
-    opt_matrix_out[x, y] = opt_matrix_in[x, y]
-
     if opt_matrix_in[x, y] == old_value and prob_per_col[y] > rand_toss:
-        opt_matrix_out[x, y] = new_value
         opt_matrix_in[x, y] = new_value
         _ = cuda.atomic.add(cnt_per_row, x, 1)
 
@@ -89,46 +86,54 @@ class CudaIteration:
         single iteration of cuda optimization routine
         """
         opt_matrix_in = cuda.to_device(opt_matrix)
-        opt_matrix_out = cuda.to_device(opt_matrix)
-        prob_per_col_d = cuda.to_device(prob_per_col)
+        prob_per_col = cuda.to_device(prob_per_col)
 
         row_change_cnt = cuda.to_device(np.zeros(n_rows))
 
         xrn_states = create_xoroshiro128p_states(prod(blockspergrid) * prod(threadsperblock),
                                                  seed=np.random.randint(0, 10000))
 
-        # randomly remove
+        permutation_table = cuda.to_device(create_permutaion_table(can_add, self.n_permutations))
+        permutation_per_row = cuda.to_device(np.random.randint(0, self.n_permutations, n_rows))
+
+        # removal of over-represented elements
+        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
+                        permutation_per_row, True)
+        # addition of under-represented elements
+        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
+                        permutation_per_row, False)
+
+        return opt_matrix_in.copy_to_host()
+
+    def adjustment(self, opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
+                   permutation_per_row, remove_values=True):
+        # randomly remove/add
         random_optimize[self.blocks_per_grid, self.threads_per_block](
             opt_matrix_in,
             row_change_cnt,
-            prob_per_col_d,
+            prob_per_col,
             xrn_states,
-            opt_matrix_out,
-            True
+            remove_values
         )
 
-        # re add to adjust
-        perm_table = create_permutaion_table(can_add, self.n_permutations)
-
+        # re add/remove to adjust
         adjust_add_count[blockspergrid, threadsperblock](
-            opt_mat_in_d,
-            row_addremove_cnt,
-            perm_table_d,
-            perm_per_row,
-            False,
+            opt_matrix_in,
+            row_change_cnt,
+            permutation_table,
+            permutation_per_row,
+            not remove_values,
             False
         )
         adjust_add_count[blockspergrid, threadsperblock](
-            opt_mat_in_d,
-            row_addremove_cnt,
-            perm_table_d,
-            perm_per_row,
-            False,
+            opt_matrix_in,
+            row_change_cnt,
+            permutation_table,
+            permutation_per_row,
+            not remove_values,
             True
         )
 
-    def adjustment(self, opt_mat_in_d):
-        pass
 
 if __name__ == '__main__':
     np.random.seed(123)
@@ -155,7 +160,6 @@ if __name__ == '__main__':
         row_addremove_cnt,
         remove_prob,
         rn_states,
-        opt_mat_out_d,
         True
     )
 
