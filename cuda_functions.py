@@ -1,6 +1,8 @@
 from numba import cuda
 import numpy as np
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
+import time
+
 from helpers import prod, blockspergrid_threadsperblock
 
 
@@ -77,31 +79,39 @@ def create_permutaion_table(can_add, n_permutations=64):
 
 
 class CudaIteration:
-    def __init__(self, nr, nc, n_perm=128):
-        self.blocks_per_grid, self.threads_per_block = blockspergrid_threadsperblock(nr, nc)
+    def __init__(self, n_rows, n_cols, n_perm=128):
+        self.blocks_per_grid, self.threads_per_block = blockspergrid_threadsperblock(n_rows, n_cols)
         self.n_permutations = n_perm
+        self.n_rows = n_rows
+        self.n_cols = n_cols
+        self.computation_time = 0
 
-    def __call__(self, opt_matrix, prob_per_col, c_min, c_max, can_add):
+    def __call__(self, opt_matrix, prob_per_col_remove, prob_per_col_add, can_add, can_remove):
         """
         single iteration of cuda optimization routine
         """
         opt_matrix_in = cuda.to_device(opt_matrix)
-        prob_per_col = cuda.to_device(prob_per_col)
+        prob_per_col_r = cuda.to_device(prob_per_col_remove)
+        prob_per_col_a = cuda.to_device(prob_per_col_add)
 
-        row_change_cnt = cuda.to_device(np.zeros(n_rows))
+        row_change_cnt = cuda.to_device(np.zeros(self.n_rows))
 
-        xrn_states = create_xoroshiro128p_states(prod(blockspergrid) * prod(threadsperblock),
+        xrn_states = create_xoroshiro128p_states(prod(self.blocks_per_grid) * prod(self.threads_per_block),
                                                  seed=np.random.randint(0, 10000))
 
-        permutation_table = cuda.to_device(create_permutaion_table(can_add, self.n_permutations))
-        permutation_per_row = cuda.to_device(np.random.randint(0, self.n_permutations, n_rows))
+        permutation_table_remove = cuda.to_device(create_permutaion_table(can_remove, self.n_permutations))
+        permutation_table_add = cuda.to_device(create_permutaion_table(can_add, self.n_permutations))
+        permutation_per_row = cuda.to_device(np.random.randint(0, self.n_permutations, self.n_rows))
 
+        start_compute = time.time()
         # removal of over-represented elements
-        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
+        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col_r, xrn_states, permutation_table_remove,
                         permutation_per_row, True)
         # addition of under-represented elements
-        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
+        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col_a, xrn_states, permutation_table_add,
                         permutation_per_row, False)
+        compute_time = time.time() - start_compute
+        self.computation_time += compute_time
 
         return opt_matrix_in.copy_to_host()
 
@@ -117,7 +127,7 @@ class CudaIteration:
         )
 
         # re add/remove to adjust
-        adjust_add_count[blockspergrid, threadsperblock](
+        adjust_add_count[self.blocks_per_grid, self.threads_per_block](
             opt_matrix_in,
             row_change_cnt,
             permutation_table,
@@ -125,7 +135,7 @@ class CudaIteration:
             not remove_values,
             False
         )
-        adjust_add_count[blockspergrid, threadsperblock](
+        adjust_add_count[self.blocks_per_grid, self.threads_per_block](
             opt_matrix_in,
             row_change_cnt,
             permutation_table,

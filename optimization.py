@@ -1,10 +1,8 @@
-from numba import njit, prange, cuda
-from numba.cuda.random import create_xoroshiro128p_states
+from numba import njit, prange
 
 import numpy as np
 import time
-from optimization_cuda import iteration_improve_cuda, TPB
-import math
+from cuda_functions import CudaIteration
 import operator
 from functools import reduce
 
@@ -99,6 +97,7 @@ def get_iteration_parameters(opt_matrix, c_min, c_max):
 
     return over_alloc_pct, under_alloc_pct, can_add, can_remove
 
+
 @njit
 def improve_single_row(opt_vector, over_alloc_pct, under_alloc_pct, can_add, can_remove):
     """ randomly adds or remove items based on the over and under allocation percentages
@@ -162,6 +161,7 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter
     :param c_max: col constraints vector C_max
     :param max_iter: maximal number of improvement iterations
     :param verbose: whether to print intermediary output or not
+    :param use_cuda: Run the optimisation using CUDA GPU or not
     """
 
     total_time = 0
@@ -171,6 +171,8 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter
 
     over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max, verbose)
 
+    cuda_interation = CudaIteration(opt_matrix.shape[0], opt_matrix.shape[1])
+
     solution_vals = []
     iteration_n = 0
     while (sum(over_alloc) > 1 or sum(under_alloc) > 1) and iteration_n != max_iter:
@@ -179,31 +181,16 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter
         with Timer(f"Iteration {iteration_n} :\n", verbose) as t:
             over_alloc_pct, under_alloc_pct, can_add, can_remove = get_iteration_parameters(opt_matrix, c_min, c_max)
             if use_cuda:
-                if iteration_n == 1:
-                    optmatrix_d = cuda.to_device(opt_matrix)
-                    added_c = cuda.to_device(np.zeros(n_r, dtype=np.int32))
-                    over_alloc_d = cuda.to_device(over_alloc_pct)
-                rn_states = create_xoroshiro128p_states(prod(blockspergrid) * prod(threadsperblock),
-                                                        seed=np.random.randint(0, 10000))
-                get_position = cuda.to_device(np.zeros(n_r, dtype=np.int32))
-
-                iteration_improve_cuda[blockspergrid, threadsperblock](
-                    optmatrix_d,
-                    added_c,
-                    over_alloc_d,
-                    can_add,
-                    rn_states,
-                    get_position,
-                    O_global_mem
-                    )
-                opt_matrix = O_global_mem.copy_to_host()
+                opt_matrix = cuda_interation(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
             else:
                 opt_matrix = iteration_improve(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
             over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max, verbose)
             total_time += t.get_time_s()
     solution_vals.append(np.sum(np.multiply(opt_matrix, w_matrix)))
 
-    return solution_vals, total_time
+    cuda_compute_time = cuda_interation.computation_time
+
+    return solution_vals, total_time, cuda_compute_time
 
 
 def prod(iterable):
@@ -212,19 +199,10 @@ def prod(iterable):
 
 if __name__ == '__main__':
 
-    n_r = TPB * 2 ** 7
-    n_c = TPB ** 2
-
-    # n_row = 128
-    # n_col = 32
+    n_r = 16 * 2 ** 13
+    n_c = 16 ** 2
 
     np.random.seed(123)
-    M = np.random.randint(0, 2, (n_r, n_c)).astype(np.int32)
-    added_count = np.zeros(n_r, dtype=np.int32)
-
-
-    M_global_mem = cuda.to_device(M)
-    O_global_mem = cuda.device_array((n_r, n_c))  # [32 x 16] matrix result
 
     M = np.zeros((n_r, n_c)).astype(np.int32)
     W = np.random.random((n_r, n_c)).astype(np.float32)
@@ -232,15 +210,8 @@ if __name__ == '__main__':
     C_max = np.random.randint(0.1 * n_r, n_r, n_c).astype(np.int32)
     C_min = C_max - n_r * 0.05
 
-    threadsperblock =  (1, n_c) #(TPB, TPB) #
-    blockspergrid_x = int(math.ceil(M.shape[0] / threadsperblock[0]))
-    blockspergrid_y = int(math.ceil(M.shape[1] / threadsperblock[1]))
-    blockspergrid = (blockspergrid_x, blockspergrid_y)
+    _, time_taken, cuda_time = iterative_improvement(M, W, R, C_min, C_max, max_iter=30, verbose=True,
+                                                     use_cuda=True)
 
-    # Start the kernel
-    # iteration_improve_cuda[blockspergrid, threadsperblock](M_global_mem, added_count, O_global_mem)
-
-    _, time_taken = iterative_improvement(M, W, R, C_min, C_max, max_iter=3, verbose=True,
-                                          use_cuda=True)
-
-    print(time_taken)
+    print("total time taken:",  time_taken)
+    print("cuda computation time:",  cuda_time)
