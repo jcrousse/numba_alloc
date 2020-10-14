@@ -53,6 +53,18 @@ def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row, remo
             _ = cuda.atomic.add(cnt_per_row, x, 1)
 
 
+@cuda.jit
+def sum_per_col(opt_matrix_in, sum_vector):
+    """
+    naive approach to calculate the sum per column with CUDA (there are probably more efficient ways)
+    """
+    x, y = cuda.grid(2)
+    if x >= opt_matrix_in.shape[0] and y >= opt_matrix_in.shape[1]:
+        return
+    if opt_matrix_in[x, y] == 1:
+        _ = cuda.atomic.add(sum_vector, y, 1)
+
+
 def create_permutaion_table(can_add, n_permutations=64):
     """
     creates a table with random permutation of column indices.
@@ -93,6 +105,7 @@ class CudaIteration:
         opt_matrix_in = cuda.to_device(opt_matrix)
         prob_per_col_r = cuda.to_device(prob_per_col_remove)
         prob_per_col_a = cuda.to_device(prob_per_col_add)
+        total_per_col = cuda.to_device(np.zeros(self.n_cols))
 
         row_change_cnt = cuda.to_device(np.zeros(self.n_rows))
 
@@ -110,10 +123,14 @@ class CudaIteration:
         # addition of under-represented elements
         self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col_a, xrn_states, permutation_table_add,
                         permutation_per_row, False)
+
+        sum_per_col[self.blocks_per_grid, self.threads_per_block](opt_matrix_in, total_per_col)
+
         compute_time = time.time() - start_compute
+
         self.computation_time += compute_time
 
-        return opt_matrix_in.copy_to_host()
+        return total_per_col.copy_to_host()
 
     def adjustment(self, opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
                    permutation_per_row, remove_values=True):

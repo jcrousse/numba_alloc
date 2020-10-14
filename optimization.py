@@ -49,9 +49,8 @@ def optimal_result(opt_matrix, w_matrix, r_vect):
 
 
 @njit
-def n_add_remove(opt_matrix, c_min, c_max):
+def n_add_remove(total_p_col, c_min, c_max):
     """Computes the level of over/under allocation for each pack."""
-    total_p_col = opt_matrix.sum(axis=0)
 
     to_remove = total_p_col - c_max
     to_remove[np.where(to_remove < 0)] = 0
@@ -83,17 +82,17 @@ def iteration_improve(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_
 
 
 @njit
-def get_iteration_parameters(opt_matrix, c_min, c_max):
+def get_iteration_parameters(total_p_col, c_min, c_max, n_rows):
 
-    to_remove, to_add, can_add, can_remove = n_add_remove(opt_matrix, c_min, c_max)
+    to_remove, to_add, can_add, can_remove = n_add_remove(total_p_col, c_min, c_max)
 
     # # Inmprove convergeance by using min(max) as target when items are over (under) allocated
     diff_max_min = c_max - c_min
     to_remove_adj = (to_remove + diff_max_min) * (to_remove > 0)
     to_add_adj = (to_add + diff_max_min) * (to_add > 0)
 
-    over_alloc_pct = to_remove_adj / opt_matrix.shape[0]
-    under_alloc_pct = to_add_adj / opt_matrix.shape[0]
+    over_alloc_pct = to_remove_adj / n_rows
+    under_alloc_pct = to_add_adj / n_rows
 
     return over_alloc_pct, under_alloc_pct, can_add, can_remove
 
@@ -131,15 +130,15 @@ def improve_single_row(opt_vector, over_alloc_pct, under_alloc_pct, can_add, can
                 opt_vector[idx] = False
 
 
-def print_solution_diagnostic(opt_matrix, c_min, c_max, verbose):
+def print_solution_diagnostic(total_per_col, c_min, c_max, verbose):
     """prints a summary of solution status to keep track of improvements through iterations
     basic idea is to show how many constraints are breached and by how much"""
-    over_alloc, under_alloc, _, _ = n_add_remove(opt_matrix, c_min, c_max)
+    over_alloc, under_alloc, _, _ = n_add_remove(total_per_col, c_min, c_max)
     if verbose:
         if over_alloc.sum() == 0 and under_alloc.sum() == 0:
             print("all constraints are met!")
         else:
-            for idx in prange(opt_matrix.shape[1]):
+            for idx in prange(len(total_per_col)):
                 if over_alloc[idx] > 0:
                     print(str(int(over_alloc[idx])) + " total too high for column " + str(idx))
 
@@ -169,7 +168,9 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter
         opt_matrix = optimal_result(opt_matrix, w_matrix, r_vector)
         total_time += t.get_time_s()
 
-    over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max, verbose)
+    total_per_col = opt_matrix.sum(axis=0)
+    n_rows = opt_matrix.shape[0]
+    over_alloc, under_alloc = print_solution_diagnostic(total_per_col, c_min, c_max, verbose)
 
     cuda_interation = CudaIteration(opt_matrix.shape[0], opt_matrix.shape[1])
 
@@ -179,12 +180,14 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter
         solution_vals.append(np.sum(np.multiply(opt_matrix, w_matrix)))
         iteration_n += 1
         with Timer(f"Iteration {iteration_n} :\n", verbose) as t:
-            over_alloc_pct, under_alloc_pct, can_add, can_remove = get_iteration_parameters(opt_matrix, c_min, c_max)
+            over_alloc_pct, under_alloc_pct, can_add, can_remove = \
+                get_iteration_parameters(total_per_col, c_min, c_max, n_rows)
             if use_cuda:
-                opt_matrix = cuda_interation(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
+                total_per_col = cuda_interation(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
             else:
                 opt_matrix = iteration_improve(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
-            over_alloc, under_alloc = print_solution_diagnostic(opt_matrix, c_min, c_max, verbose)
+                total_per_col = opt_matrix.sum(axis=0)
+            over_alloc, under_alloc = print_solution_diagnostic(total_per_col, c_min, c_max, verbose)
             total_time += t.get_time_s()
     solution_vals.append(np.sum(np.multiply(opt_matrix, w_matrix)))
 
