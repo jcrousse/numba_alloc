@@ -105,7 +105,7 @@ class CudaIteration:
         opt_matrix_in = cuda.to_device(opt_matrix)
         prob_per_col_r = cuda.to_device(prob_per_col_remove)
         prob_per_col_a = cuda.to_device(prob_per_col_add)
-        total_per_col = cuda.to_device(np.zeros(self.n_cols))
+        # total_per_col = cuda.to_device(np.zeros(self.n_cols))
 
         row_change_cnt = cuda.to_device(np.zeros(self.n_rows))
 
