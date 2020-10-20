@@ -124,13 +124,15 @@ class CudaIteration:
         self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col_a, xrn_states, permutation_table_add,
                         permutation_per_row, False)
 
-        sum_per_col[self.blocks_per_grid, self.threads_per_block](opt_matrix_in, total_per_col)
+        # sum_per_col[self.blocks_per_grid, self.threads_per_block](opt_matrix_in, total_per_col)
+        #sum_array = [sum_reduce(opt_matrix_in[:, idx]) for idx in range(self.n_cols)]  # todo: //
 
         compute_time = time.time() - start_compute
 
         self.computation_time += compute_time
 
-        return total_per_col.copy_to_host()
+        opt_mat = opt_matrix_in.copy_to_host()
+        return opt_mat.sum(axis=0)
 
     def adjustment(self, opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
                    permutation_per_row, remove_values=True):
@@ -162,7 +164,19 @@ class CudaIteration:
         )
 
 
+@cuda.reduce
+def sum_reduce(a, b):
+    return a + b
+
+
 if __name__ == '__main__':
+
+    A = cuda.to_device(np.ones((10, 10)))
+    B = cuda.to_device(np.zeros(10))
+    sum_per_col[(10,10), (10,10)](A, B)
+    C = B.copy_to_host()
+    got = sum_reduce(A, size=2)
+
     np.random.seed(123)
 
     n_rows = 64
