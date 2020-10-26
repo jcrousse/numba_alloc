@@ -132,7 +132,7 @@ class CudaIteration:
         self.computation_time += compute_time
 
         opt_mat = opt_matrix_in.copy_to_host()
-        return opt_mat.sum(axis=0)
+        return opt_mat
 
     def adjustment(self, opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
                    permutation_per_row, remove_values=True):

@@ -183,10 +183,10 @@ def iterative_improvement(opt_matrix, w_matrix, r_vector, c_min, c_max, max_iter
             over_alloc_pct, under_alloc_pct, can_add, can_remove = \
                 get_iteration_parameters(total_per_col, c_min, c_max, n_rows)
             if use_cuda:
-                total_per_col = cuda_interation(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
+                opt_matrix = cuda_interation(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
             else:
                 opt_matrix = iteration_improve(opt_matrix, over_alloc_pct, under_alloc_pct, can_add, can_remove)
-                total_per_col = opt_matrix.sum(axis=0)
+            total_per_col = opt_matrix.sum(axis=0)
             over_alloc, under_alloc = print_solution_diagnostic(total_per_col, c_min, c_max, verbose)
             total_time += t.get_time_s()
     solution_vals.append(np.sum(np.multiply(opt_matrix, w_matrix)))
