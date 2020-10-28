@@ -214,7 +214,7 @@ if __name__ == '__main__':
     C_min = C_max - n_r * 0.05
 
     _, time_taken, cuda_time = iterative_improvement(M, W, R, C_min, C_max, max_iter=30, verbose=True,
-                                                     use_cuda=True)
+                                                     use_cuda=False)
 
     print("total time taken:",  time_taken)
     print("cuda computation time:",  cuda_time)
