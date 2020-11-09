@@ -7,7 +7,7 @@ from helpers import prod, blockspergrid_threadsperblock
 
 
 @cuda.jit
-def random_optimize(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, remove=False):
+def random_optimize(opt_matrix_in, cnt_per_row, prob_per_col, random_mat, remove=False):
     """
     Random removal(adding) of elements by randomly switching value in opt_matrix from 1 to 0 (0 to 1).
     Probability of being removed(added) given by prob_per_col
@@ -21,9 +21,8 @@ def random_optimize(opt_matrix_in, cnt_per_row, prob_per_col, rn_states, remove=
         return
 
     flat_idx = opt_matrix_in.shape[1] * x + y
-    rand_toss = xoroshiro128p_uniform_float32(rn_states, flat_idx)
 
-    if opt_matrix_in[x, y] == old_value and prob_per_col[y] > rand_toss:
+    if opt_matrix_in[x, y] == old_value and prob_per_col[y] > random_mat[x, y]:
         opt_matrix_in[x, y] = new_value
         _ = cuda.atomic.add(cnt_per_row, x, 1)
 
@@ -51,6 +50,18 @@ def adjust_add_count(opt_matrix_in, cnt_per_row, perm_table, order_per_row, remo
             opt_matrix_in[x, y] = (1 - old_val)
         else:
             _ = cuda.atomic.add(cnt_per_row, x, 1)
+
+
+@cuda.jit
+def sum_per_col(opt_matrix_in, sum_vector):
+    """
+    naive approach to calculate the sum per column with CUDA (there are probably more efficient ways)
+    """
+    x, y = cuda.grid(2)
+    if x >= opt_matrix_in.shape[0] and y >= opt_matrix_in.shape[1]:
+        return
+    if opt_matrix_in[x, y] == 1:
+        _ = cuda.atomic.add(sum_vector, y, 1)
 
 
 def create_permutaion_table(can_add, n_permutations=64):
@@ -85,19 +96,23 @@ class CudaIteration:
         self.n_rows = n_rows
         self.n_cols = n_cols
         self.computation_time = 0
+        self.transfer_time = 0
 
     def __call__(self, opt_matrix, prob_per_col_remove, prob_per_col_add, can_add, can_remove):
         """
         single iteration of cuda optimization routine
         """
+        start_compute = time.time()
         opt_matrix_in = cuda.to_device(opt_matrix)
+        compute_time = time.time() - start_compute
+        self.transfer_time += compute_time
+
         prob_per_col_r = cuda.to_device(prob_per_col_remove)
         prob_per_col_a = cuda.to_device(prob_per_col_add)
 
         row_change_cnt = cuda.to_device(np.zeros(self.n_rows))
 
-        xrn_states = create_xoroshiro128p_states(prod(self.blocks_per_grid) * prod(self.threads_per_block),
-                                                 seed=np.random.randint(0, 10000))
+        random_mat = np.random.random((self.n_rows, self.n_cols))
 
         permutation_table_remove = cuda.to_device(create_permutaion_table(can_remove, self.n_permutations))
         permutation_table_add = cuda.to_device(create_permutaion_table(can_add, self.n_permutations))
@@ -105,24 +120,30 @@ class CudaIteration:
 
         start_compute = time.time()
         # removal of over-represented elements
-        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col_r, xrn_states, permutation_table_remove,
+        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col_r, random_mat, permutation_table_remove,
                         permutation_per_row, True)
         # addition of under-represented elements
-        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col_a, xrn_states, permutation_table_add,
+        self.adjustment(opt_matrix_in, row_change_cnt, prob_per_col_a, random_mat, permutation_table_add,
                         permutation_per_row, False)
+
+        # sum_per_col[self.blocks_per_grid, self.threads_per_block](opt_matrix_in, total_per_col)
+        #sum_array = [sum_reduce(opt_matrix_in[:, idx]) for idx in range(self.n_cols)]  # todo: //
+
         compute_time = time.time() - start_compute
+
         self.computation_time += compute_time
 
-        return opt_matrix_in.copy_to_host()
+        opt_mat = opt_matrix_in.copy_to_host()
+        return opt_mat
 
-    def adjustment(self, opt_matrix_in, row_change_cnt, prob_per_col, xrn_states, permutation_table,
+    def adjustment(self, opt_matrix_in, row_change_cnt, prob_per_col, random_mat, permutation_table,
                    permutation_per_row, remove_values=True):
         # randomly remove/add
         random_optimize[self.blocks_per_grid, self.threads_per_block](
             opt_matrix_in,
             row_change_cnt,
             prob_per_col,
-            xrn_states,
+            random_mat,
             remove_values
         )
 
@@ -145,7 +166,19 @@ class CudaIteration:
         )
 
 
+@cuda.reduce
+def sum_reduce(a, b):
+    return a + b
+
+
 if __name__ == '__main__':
+
+    A = cuda.to_device(np.ones((10, 10)))
+    B = cuda.to_device(np.zeros(10))
+    sum_per_col[(10,10), (10,10)](A, B)
+    C = B.copy_to_host()
+    got = sum_reduce(A, size=2)
+
     np.random.seed(123)
 
     n_rows = 64
